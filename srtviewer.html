@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<body onclick="document.getElementById('srt').focus()" style="background: black; color: white">
+<div style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; font-family: sans-serif; text-align: center">
+<div id="output" style="display: inline-block; white-space: pre"></div></div>
+<div id="thetime" style="position: absolute; left: 0; top: 0"></div>
+<textarea id="srt" style="opacity: 0" oninput="init(this.value)" style="position: absolute; left: 0; top: 0"></textarea>
+<script>
+window.timeCode = 0;
+window.speed = 0;
+window.start = new Date().getTime();
+window.subtitles = [];
+window.currentSubtitleIndex = 0;
+window.updateSubtitleTimeout = null;
+window.updateTheTimeInterval = null;
+
+window.showTime = 1;
+
+function leftPad(v) {
+	const s = "00" + v;
+	return s.substring(s.length - 2, s.length);
+}
+
+function displayTheTime() {
+	if (window.showTime === 0) return "";
+	const msecs = currentTime();
+	const secs = (msecs / 1000) | 0;
+	const sec = secs % 60;
+	const mins = (secs / 60) | 0;
+	const min = mins % 60;
+	const hrs = (mins / 60) | 0;
+	const frac = (msecs % 1000 / 100) | 0;
+	if (window.showTime === 2)
+		return hrs + ":" + leftPad(min) + ":" + leftPad(sec);
+	return hrs + ":" + leftPad(min) + ":" + leftPad(sec) + "." + frac + " " + window.currentSubtitleIndex + "/" + window.subtitles.length;
+}
+
+function updateTheTime() {
+	document.getElementById("thetime").textContent = displayTheTime();
+}
+
+function setTime(t) {
+	window.timeCode = Math.max(0, t);
+	window.start = new Date().getTime();
+}
+
+function currentTime() {
+	return window.timeCode + (new Date().getTime() - window.start) * window.speed;
+}
+
+function setSpeed(s) {
+	setTime(currentTime());
+	window.speed = s;
+	queueUpdateSubtitle();
+	if (window.updateTheTimeInterval)
+		window.clearInterval(window.updateTheTimeInterval);
+	window.updateTheTimeInterval = s ? window.setInterval(updateTheTime, 42) : null;
+}
+
+function updateSubtitle() {
+	const t = currentTime();
+	let i = window.currentSubtitleIndex;
+	while (i + 1 < window.subtitles.length && window.subtitles[i + 1].start < t)
+		i++;
+	while (i - 1 >= 0 && window.subtitles[i].start > t)
+		i--;
+	const current = window.subtitles[i];
+	const visible = current.start <= t && t < current.end;
+	const nextTime = visible ? current.end : (t < current.start) ? current.start : (i + 1) < window.subtitles.length ? window.subtitles[i + 1].start : null;
+	document.getElementById("output").innerHTML = visible ? current.html : "";
+	window.currentSubtitleIndex = i;
+	queueUpdateSubtitle();
+}
+
+function queueUpdateSubtitle() {
+	if (window.subtitles.length === 0) return;
+	const t = currentTime();
+	const i = window.currentSubtitleIndex;
+	const current = window.subtitles[i];
+	const nextTime = (t < current.start) ? current.start : (t < current.end) ? current.end : (i + 1) < window.subtitles.length ? window.subtitles[i + 1].start : null;
+	if (window.updateSubtitleTimeout !== null)
+		clearTimeout(window.updateSubtitleTimeout);
+	//console.log("nextTime", nextTime);
+	window.updateSubtitleTimeout = (nextTime === null || !window.speed) ? null : setTimeout(updateSubtitle, (nextTime - t) / window.speed);
+}
+
+function parseTime(h, m, s) {
+	return parseInt(h) * 3600000 + parseInt(m) * 60000 + (parseFloat(s.replace(',', '.')) * 1000)|0;
+}
+
+function init(text) {
+	text = text.replace(/\r\n|\r|\n/g, '\n');
+	const partsStr = text.split(/\n\n+/);
+	const parts = [];
+	//console.log(partsStr);
+	for (const part of partsStr) {
+		const mo = /^\d+\n(\d+):(\d+):(\d+[,.]?\d*) --> (\d+):(\d+):(\d+[,.]?\d*)\n((?:.|\n)*)/.exec(part);
+		if (!mo) continue;
+		parts.push({
+			start: parseTime(mo[1], mo[2], mo[3]),
+			end: parseTime(mo[4], mo[5], mo[6]),
+			html: mo[7],
+		});
+	}
+	const el = document.getElementById("output");
+	el.innerHTML = parts.map(p => p.html).join("\n");
+	const scale = document.body.clientWidth / el.clientWidth;
+	el.style.fontSize = parseFloat(window.getComputedStyle(el).fontSize) * scale + "px";
+	el.innerHTML = "";
+	window.subtitles = parts;
+	window.currentSubtitleIndex = 0;
+	queueUpdateSubtitle();
+}
+
+function keypress(ev) {
+	if (ev.key === " ") {
+		setSpeed(window.speed ? 0 : 1);
+		ev.preventDefault();
+		ev.stopPropagation();
+		return;
+	}
+	if (ev.key === "t") {
+		window.showTime = (window.showTime + 1) % 3;
+		updateTheTime();
+		ev.preventDefault();
+		ev.stopPropagation();
+		return;
+	}
+	const dir = (ev.key === "ArrowLeft") ? -1 : (ev.key === "ArrowRight") ? 1 : 0;
+	const amount = ev.ctrlKey ? 60 : ev.altKey ? 10 : ev.shiftKey ? 3 : 0;
+	const seek = 1000 * dir * amount;
+	if (!seek) return;
+	setTime(currentTime() + seek);
+	ev.preventDefault();
+	ev.stopPropagation();
+	//console.log(window.timeCode, currentTime());
+	updateSubtitle();
+}
+document.body.addEventListener("keypress", keypress, true);
+
+if (document.getElementById("srt").value) init(document.getElementById("srt").value);
+</script>
